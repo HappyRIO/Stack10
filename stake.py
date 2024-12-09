@@ -39,10 +39,7 @@ async def main():
                 next_message = await client.get_messages(channel, ids=message.id + 1)
                 if next_message:
                     print(f'Image: {next_message.message}')
-                    await download_images(next_message, client)
-                
-                # Process images after downloading
-                extract_text_from_image(language='eng+spa')
+                    await download_images(next_message, client)            
 
         # Run the client until interrupted
         print(f'Listening for new messages in {channel_username}...')
@@ -55,65 +52,55 @@ async def download_images(message, client):
             file_path = os.path.join(download_dir, f'{message.id}.jpg')
             await client.download_media(message.media, file=file_path)
             print(f'Downloaded: {file_path}')
+            
+            extract_text_from_image(file_path, language='eng+spa')
 
-def preprocess_image(image_path, save_preprocessed=False):
-    """Load and preprocess the image for better OCR results: remove watermark but keep colored text."""
-    # Load the image using OpenCV
+def preprocess_image(image_path):
+    """Load and preprocess the image for better OCR results."""
     img_cv = cv2.imread(image_path)
 
-    # Convert to grayscale for watermark detection
+    # Convert to grayscale and apply Gaussian blur
     gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-
-    # Apply Gaussian blur to reduce noise
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    ret3, th3 = cv2.threshold(blur, 200, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    ret, threshed = cv2.threshold(blur, 200, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    # Convert to PIL Image
-    final_image = Image.fromarray(th3)
-    
-    os.remove(image_path)  # Remove original image after processing
+    # Save the preprocessed image
+    preprocessed_path = os.path.join(output_dir, os.path.basename(image_path))
+    cv2.imwrite(preprocessed_path, threshed)
 
-    # Save the preprocessed image if required
-    if save_preprocessed:
-        preprocessed_image_path = os.path.join(output_dir, os.path.basename(image_path))
-        final_image.save(preprocessed_image_path)
+    return preprocessed_path
 
-    return final_image
-
-def extract_text_from_image(language: str = 'eng+spa'):
+def extract_text_from_image(file_path, language: str = 'eng+spa'):
     """Extract text from images in the specified directory and save to a file."""
-    image_directory = download_dir
-    image_extensions = ('.png', '.jpg', '.jpeg', '.bmp', '.gif')
     output_file_path = 'extracted_text.txt'  # Output file for extracted text
 
     # Create or overwrite the output file
-    with open(output_file_path, 'w', encoding='utf-8') as output_file:
-        for filename in os.listdir(image_directory):
-            if filename.lower().endswith(image_extensions):
-                image_path = os.path.join(image_directory, filename)
+    with open(output_file_path, 'a', encoding='utf-8') as output_file:  # Append mode
                 try:
-                    # Preprocess the image and save
-                    preprocess_image(image_path, save_preprocessed=True)
+                    # Preprocess the image and get the path of the preprocessed image
+                    preprocessed_image_path = preprocess_image(file_path)
 
                     # Extract text using pytesseract
-                    custom_config = r'--oem 3 --psm 6'  # Adjust Tesseract settings as needed
-                    extracted_text = pytesseract.image_to_string(image_path, lang=language, config=custom_config)
-                    
-                    os.remove(image_path)  # Remove preprocessed image after processing
-                    
+                    custom_config = r'--oem 3 --psm 6'
+                    extracted_text = pytesseract.image_to_string(preprocessed_image_path, lang=language, config=custom_config)
+
                     # Save the extracted text to the output file
                     output_file.write(f'>>>>>>>>>>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<<\n')
-                    output_file.write(f'Extracted from: {filename}\n')
+                    output_file.write(f'Extracted from: {file_path}\n')
                     output_file.write(extracted_text + '\n')
                     output_file.write(f'>>>>>>>>>>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<<\n\n')
 
-                    print(f"Image '{image_path}' successfully processed.")
+                    print(f"Image '{file_path}' successfully processed.")
                 except Exception as e:
-                    print(f"An error occurred while processing '{image_path}': {e}")
+                    print(f"An error occurred while processing '{file_path}': {e}")
+
+                # Optionally, remove the downloaded image after processing
+                os.remove(file_path)
+                os.remove(preprocessed_image_path)
 
 if __name__ == '__main__':
-    # Path to the tesseract executable (required on Windows)
-    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+    # Update the Tesseract command based on your OS and installation path
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'  # Adjust as needed
 
     # Run the main function
     asyncio.run(main())
